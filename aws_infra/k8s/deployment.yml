@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: massage-website
+  labels:
+    app: massage-website
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 300
+  selector:
+    matchLabels:
+      app: massage-website
+  template:
+    metadata:
+      labels:
+        app: massage-website
+    spec:
+      containers:
+        - name: massage-website
+          image: "${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}" # Placeholder for dynamic substitution
+          ports:
+            - containerPort: 80
+          env:
+            - name: AWS_REGION
+              value: "us-east-1"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5

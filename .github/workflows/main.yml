@@ -1,0 +1,313 @@
+# name: Build and Deploy
+
+# on:
+#   push:
+#     branches:
+#       - master
+#   pull_request:
+#     branches:
+#       - master
+
+# permissions:
+#   id-token: write
+#   contents: read
+
+# jobs:
+#   deploy-infrastructure:
+#     runs-on: ubuntu-latest
+#     defaults:
+#       run:
+#         working-directory: ./aws_infra
+#     outputs:
+#       ecr_repository_url: ${{ steps.terraform-output.outputs.ecr_url }}
+#       cluster_name: ${{ steps.terraform-output.outputs.cluster_name }}
+
+#     steps:
+#     - name: Checkout
+#       uses: actions/checkout@v4
+#       with:
+#         fetch-depth: 0
+#         submodules: true
+
+#     - name: Configure AWS Credentials
+#       uses: aws-actions/configure-aws-credentials@v4
+#       with:
+#         role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+#         aws-region: us-east-1
+#         role-session-name: GitHubActions-${{ github.run_id }}
+#         role-duration-seconds: 3600
+#         audience: sts.amazonaws.com
+
+#     - name: Setup Terraform
+#       uses: hashicorp/setup-terraform@v3
+#       with:
+#         terraform_wrapper: false
+
+#     - name: Terraform Init
+#       run: terraform init
+
+#     - name: Terraform Plan
+#       run: terraform plan -no-color
+
+#     - name: Terraform Apply
+#       if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+#       run: terraform apply -auto-approve
+
+#     - name: Get Terraform Outputs
+#       id: terraform-output
+#       if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+#       run: |
+#         ECR_URL=$(terraform output -raw ecr_repository_url)
+#         IMAGE_TAG=$(terraform output -raw image_tag)  # Get dynamic image tag (e.g., Git commit)
+#         CLUSTER_NAME=$(terraform output -raw cluster_name)
+#         echo "ecr_url=${ECR_URL}" >> $GITHUB_OUTPUT
+#         echo "REPO_NAME=falcon_ecr" >> $GITHUB_ENV
+#         echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
+#         echo "image_tag=${IMAGE_TAG}" >> $GITHUB_ENV  # Save image_tag as an environment variable
+
+#   build-and-push:
+#     runs-on: ubuntu-latest
+#     needs: deploy-infrastructure
+#     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+#     steps:
+#     - name: Checkout code
+#       uses: actions/checkout@v4
+
+#     - name: Configure AWS credentials
+#       uses: aws-actions/configure-aws-credentials@v4
+#       with:
+#         role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+#         aws-region: us-east-1
+#         role-session-name: GitHubActions-${{ github.run_id }}
+
+#     - name: Login to Amazon ECR
+#       id: login-ecr
+#       uses: aws-actions/amazon-ecr-login@v2
+
+#     - name: Build and push Docker image
+#       env:
+#         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+#         REPO_NAME: "falcon_ecr"
+#         IMAGE_TAG: ${{ github.sha }}
+#       run: |
+#         echo "Building for registry: $ECR_REGISTRY/$REPO_NAME"
+#         echo "Building with tag: $IMAGE_TAG"
+        
+#         docker build -t ${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG} .
+#         docker tag ${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG} ${ECR_REGISTRY}/${REPO_NAME}:latest
+        
+#         docker push ${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}
+#         docker push ${ECR_REGISTRY}/${REPO_NAME}:latest
+
+#   deploy-to-k8s:
+#     runs-on: ubuntu-latest
+#     needs: [deploy-infrastructure, build-and-push]
+#     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+#     steps:
+#     - name: Checkout code
+#       uses: actions/checkout@v4
+
+#     - name: Configure AWS credentials
+#       uses: aws-actions/configure-aws-credentials@v4
+#       with:
+#         role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+#         aws-region: us-east-1
+#         role-session-name: GitHubActions-${{ github.run_id }}
+
+#     - name: Configure kubectl
+#       run: |
+#         aws eks update-kubeconfig --name ${{ needs.deploy-infrastructure.outputs.cluster_name }} --region us-east-1
+
+#     - name: Deploy to Kubernetes
+#       env:
+#         ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+#         IMAGE_TAG: ${{ github.sha }}
+#       run: |
+#         cd aws_infra
+#         # Replace placeholders in manifests
+#         envsubst < k8s/deployment.yml | kubectl apply -f -
+#         kubectl apply -f k8s/service.yml
+#         kubectl apply -f k8s/ingress.yml
+        
+#         # Wait for deployment
+#         kubectl rollout status deployment/massage-website
+
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./aws_infra
+    outputs:
+      ecr_repository_url: ${{ steps.terraform-output.outputs.ecr_url }}
+      cluster_name: ${{ steps.terraform-output.outputs.cluster_name }}
+      image_tag: ${{ steps.terraform-output.outputs.image_tag }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        submodules: true
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        aws-region: us-east-1
+        role-session-name: GitHubActions-${{ github.run_id }}
+        role-duration-seconds: 3600
+        audience: sts.amazonaws.com
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Plan
+      run: terraform plan -no-color
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+      run: terraform apply -auto-approve
+
+    - name: Get Terraform Outputs
+      id: terraform-output
+      if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+      run: |
+        ECR_URL=$(terraform output -raw ecr_repository_url)
+        CLUSTER_NAME=$(terraform output -raw cluster_name)
+        IMAGE_TAG=$(terraform output -raw image_tag)
+        echo "ecr_url=${ECR_URL}" >> $GITHUB_OUTPUT
+        echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
+        echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        aws-region: us-east-1
+        role-session-name: GitHubActions-${{ github.run_id }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build and push Docker image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        REPO_NAME: "falcon_ecr"
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        echo "Building for registry: $ECR_REGISTRY/$REPO_NAME"
+        echo "Building with tag: $IMAGE_TAG"
+        
+        docker build -t ${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG} .
+        docker tag ${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG} ${ECR_REGISTRY}/${REPO_NAME}:latest
+        
+        docker push ${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}
+        docker push ${ECR_REGISTRY}/${REPO_NAME}:latest
+
+  deploy-to-k8s:
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, build-and-push]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        aws-region: us-east-1
+        role-session-name: GitHubActions-${{ github.run_id }}
+
+    - name: Configure kubectl
+      run: |
+        aws eks update-kubeconfig --name ${{ needs.deploy-infrastructure.outputs.cluster_name }} --region us-east-1
+
+
+    - name: Deploy to Kubernetes
+      env:
+        ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        cd aws_infra
+        
+        # Cleanup old resources first
+        echo "Cleaning up old deployment resources..."
+        kubectl delete deployment massage-website --ignore-not-found=true
+        kubectl get pods -l app=massage-website -o name | xargs -r kubectl delete --force --grace-period=0
+        kubectl delete rs -l app=massage-website --ignore-not-found=true
+        
+        # Wait for cleanup to complete
+        echo "Waiting for cleanup to complete..."
+        sleep 10
+        
+        # Check cluster status
+        echo "Checking cluster status..."
+        kubectl get nodes
+        
+        # Apply the manifests
+        echo "Applying new deployment..."
+        envsubst < k8s/deployment.yml | kubectl apply -f -
+        kubectl apply -f k8s/service.yml
+        kubectl apply -f k8s/ingress.yml
+        
+        # Add debugging commands
+        echo "Checking pod status..."
+        kubectl get pods -l app=massage-website
+        
+        echo "Checking pod details..."
+        kubectl describe pods -l app=massage-website
+        
+        echo "Checking pod logs..."
+        kubectl logs -l app=massage-website --all-containers=true || true
+        
+        # Check node group status if pods are pending
+        if kubectl get pods -l app=massage-website | grep -q 'Pending'; then
+          echo "Pods are pending, checking node group status..."
+          CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[0]' --output text)
+          NODEGROUP_NAME=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[0]' --output text)
+          aws eks describe-nodegroup --cluster-name $CLUSTER_NAME --nodegroup-name $NODEGROUP_NAME
+        fi
+        
+        # Then attempt the rollout
+        echo "Waiting for deployment rollout..."
+        kubectl rollout status deployment/massage-website --timeout=300s
+        
+        if [[ $? -ne 0 ]]; then
+          echo "Deployment failed. Fetching additional debug info..."
+          kubectl get events --sort-by='.metadata.creationTimestamp' | grep massage-website
+          exit 1
+        fi

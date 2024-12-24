@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: massage-website-ingress
+  annotations:
+    kubernetes.io/ingress.class: "alb"
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    external-dns.alpha.kubernetes.io/hostname: "4c27e670f3e722774d98176fbdcad63f.yl4.us-east-1.eks.amazonaws.com"
+spec:
+  rules:
+  - host: 4c27e670f3e722774d98176fbdcad63f.yl4.us-east-1.eks.amazonaws.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: massage-website-service
+            port:
+              number: 80
