@@ -40,12 +40,12 @@ variable "node_groups" {
 
 variable "cluster_name" {
   type    = string
-  default = "falcon-eks-cluster"
+  default = "eagle-eks-cluster"
 }
 
 variable "cluster_version" {
   type    = string
-  default = "1.29"
+  default = "1.31"
 }
 
 variable "public_subnets" {
