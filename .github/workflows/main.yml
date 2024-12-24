@@ -270,7 +270,7 @@ jobs:
         sudo mv /tmp/eksctl /usr/local/bin
         eksctl version
 
-        # Check and create node group if needed
+        ## Check and create node group if needed
         echo "Checking EKS node groups..."
         CLUSTER_NAME=${{ needs.deploy-infrastructure.outputs.cluster_name }}
         NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
