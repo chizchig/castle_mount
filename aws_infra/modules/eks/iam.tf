@@ -59,3 +59,28 @@ resource "aws_iam_role_policy_attachment" "registry_policy_policy_attachment" {
   role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
+
+resource "aws_iam_role_policy" "node_additional_policy" {
+  name = "${var.cluster_name}-node-additional-policy"
+  role = aws_iam_role.node_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "eks:*",
+          "ec2:CreateLaunchTemplate",
+          "ec2:CreateFleet",
+          "ec2:RunInstances",
+          "ec2:DescribeInstances",
+          "iam:CreateServiceLinkedRole",
+          "iam:AttachRolePolicy",
+          "iam:PutRolePolicy"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}

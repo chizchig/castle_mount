@@ -1,4 +1,4 @@
-name           = "falcon"
+name           = "eagle"
 vpc_cidr_block = "192.168.0.0/16"
 azs            = ["us-east-1a", "us-east-1b", "us-east-1c"]
 node_groups = {
@@ -136,4 +136,4 @@ subnet_group = {
   }
 }
 
- ecr_repository_name = "falcon_ecr"
+ ecr_repository_name = "eagle_ecr"
