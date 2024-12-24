@@ -224,7 +224,7 @@ jobs:
     - name: Build and push Docker image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        REPO_NAME: "falcon_ecr"
+        REPO_NAME: "eagle_ecr"
         IMAGE_TAG: ${{ github.sha }}
       run: |
         echo "Building for registry: $ECR_REGISTRY/$REPO_NAME"
