@@ -51,7 +51,7 @@ jobs:
         ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
         IMAGE_TAG: ${{ github.sha }}
         CLUSTER_NAME: eagle-eks-cluster
-        REPO_NAME: falcon_ecr  # Add this to match your deployment.yml
+        REPO_NAME: eagle_ecr  # Add this to match your deployment.yml
       run: |
             cd aws_infra
             
