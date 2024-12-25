@@ -50,87 +50,62 @@ jobs:
       env:
         ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
         IMAGE_TAG: ${{ github.sha }}
-        CLUSTER_NAME: ${{ needs.deploy-infrastructure.outputs.cluster_name }}
+        CLUSTER_NAME: eagle-eks-cluster
+        REPO_NAME: falcon_ecr  # Add this to match your deployment.yml
       run: |
-        cd aws_infra
+            cd aws_infra
+            
+            echo "Verifying EKS cluster..."
+            aws eks describe-cluster --name $CLUSTER_NAME || exit 1
+            
+            echo "Setting up node group..."
+            # Get VPC info
+            VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+            SUBNET_IDS=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
+            
+            # Get or create IAM role for nodes
+            NODE_ROLE_NAME="${CLUSTER_NAME}-node-role"
+            NODE_ROLE_ARN=$(aws iam get-role --role-name $NODE_ROLE_NAME --query 'Role.Arn' --output text)
+            
+            echo "Using Node Role ARN: $NODE_ROLE_ARN"
+            echo "Using Subnet IDs: $SUBNET_IDS"
+            
+            # Check for existing node groups
+            NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
+            
+            if [ -z "$NODE_GROUPS" ]; then
+            echo "Creating node group with role $NODE_ROLE_ARN"
+            aws eks create-nodegroup \
+                --cluster-name $CLUSTER_NAME \
+                --nodegroup-name managed-ng \
+                --subnets $SUBNET_IDS \
+                --instance-types t3.xlarge \  # Changed to t3.xlarge for higher CPU capacity
+                --node-role $NODE_ROLE_ARN \
+                --scaling-config minSize=1,maxSize=3,desiredSize=2 \
+                --disk-size 20 \
+                --ami-type AL2_x86_64
+            
+            echo "Waiting for node group to become active..."
+            aws eks wait nodegroup-active \
+                --cluster-name $CLUSTER_NAME \
+                --nodegroup-name managed-ng
+            fi
+            
+            echo "Waiting for nodes to join cluster..."
+            until kubectl get nodes | grep -q "Ready"; do
+            echo "Waiting for nodes..."
+            sleep 10
+            done
+            
+            echo "Applying deployment..."
+            # Use your existing deployment.yml with envsubst
+            envsubst < k8s/deployment.yml | kubectl apply -f -
+            kubectl apply -f k8s/service.yml
+            kubectl apply -f k8s/ingress.yml
+            
+            echo "Waiting for deployment rollout..."
+            kubectl rollout status deployment/massage-website --timeout=300s
         
-        # Enhanced error handling and logging
-        set -e  # Exit on any error
-        
-        echo "Getting cluster information..."
-        CLUSTER_INFO=$(aws eks describe-cluster --name $CLUSTER_NAME)
-        CLUSTER_STATUS=$(echo $CLUSTER_INFO | jq -r '.cluster.status')
-        
-        if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
-        echo "Cluster is not active. Status: $CLUSTER_STATUS"
-        exit 1
-        fi
-        
-        # Get IAM role for node group
-        NODE_ROLE_ARN=$(aws iam list-roles --query "Roles[?contains(RoleName, 'node') && contains(RoleName, '${CLUSTER_NAME}')].Arn" --output text)
-        if [ -z "$NODE_ROLE_ARN" ]; then
-        echo "Error: Could not find node role for cluster ${CLUSTER_NAME}"
-        exit 1
-        fi
-        
-        # Get subnet IDs
-        SUBNET_IDS=$(echo $CLUSTER_INFO | jq -r '.cluster.resourcesVpcConfig.subnetIds[]' | tr '\n' ' ')
-        if [ -z "$SUBNET_IDS" ]; then
-        echo "Error: No subnets found for cluster ${CLUSTER_NAME}"
-        exit 1
-        fi
-        
-        # Check for existing node groups
-        echo "Checking EKS node groups..."
-        NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
-        
-        if [ -z "$NODE_GROUPS" ]; then
-        echo "No node groups found. Creating default node group..."
-        
-        # Create node group with more specific configuration
-        aws eks create-nodegroup \
-            --cluster-name $CLUSTER_NAME \
-            --nodegroup-name default-nodegroup \
-            --scaling-config minSize=1,maxSize=3,desiredSize=2 \
-            --subnet-ids $SUBNET_IDS \
-            --instance-types t3.medium \
-            --node-role $NODE_ROLE_ARN \
-            --ami-type AL2_x86_64 \
-            --remote-access ssh=true \
-            --tags Owner=GithubAction,Environment=production
-        
-        echo "Waiting for nodegroup to be active (this may take several minutes)..."
-        aws eks wait nodegroup-active \
-            --cluster-name $CLUSTER_NAME \
-            --nodegroup-name default-nodegroup
-        
-        # Verify node group creation
-        if ! aws eks describe-nodegroup --cluster-name $CLUSTER_NAME --nodegroup-name default-nodegroup; then
-            echo "Failed to create node group"
-            exit 1
-        fi
-        fi
-        
-        # Wait for nodes to be ready
-        echo "Waiting for nodes to be ready..."
-        until kubectl get nodes -o name | grep -q .; do
-        echo "Waiting for nodes to appear..."
-        sleep 10
-        done
-        
-        echo "Cleaning up old deployment resources..."
-        kubectl delete deployment massage-website --ignore-not-found=true
-        kubectl get pods -l app=massage-website -o name | xargs -r kubectl delete --force --grace-period=0
-        kubectl delete rs -l app=massage-website --ignore-not-found=true
-        
-        echo "Applying manifests..."
-        envsubst < k8s/deployment.yml | kubectl apply -f -
-        kubectl apply -f k8s/service.yml
-        kubectl apply -f k8s/ingress.yml
-        
-        # Wait for pods to be running
-        echo "Waiting for pods to be ready..."
-        kubectl wait --for=condition=ready pod -l app=massage-website --timeout=300s
-        
-        echo "Final deployment status:"
-        kubectl get pods,svc,ingress -l app=massage-website
+            echo "Checking pod status..."
+            kubectl get pods -l app=massage-website
+            kubectl describe pods -l app=massage-website
