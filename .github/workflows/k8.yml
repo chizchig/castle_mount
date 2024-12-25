@@ -48,64 +48,71 @@ jobs:
 
     - name: Deploy to Kubernetes
       env:
-        ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
-        IMAGE_TAG: ${{ github.sha }}
-        CLUSTER_NAME: eagle-eks-cluster
-        REPO_NAME: eagle_ecr  # Add this to match your deployment.yml
+          ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+          IMAGE_TAG: ${{ github.sha }}
+          CLUSTER_NAME: eagle-eks-cluster
+          REPO_NAME: falcon_ecr
       run: |
-            cd aws_infra
-            
-            echo "Verifying EKS cluster..."
-            aws eks describe-cluster --name $CLUSTER_NAME || exit 1
-            
-            echo "Setting up node group..."
-            # Get VPC info
-            VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.resourcesVpcConfig.vpcId' --output text)
-            SUBNET_IDS=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
-            
-            # Get or create IAM role for nodes
-            NODE_ROLE_NAME="${CLUSTER_NAME}-node-role"
-            NODE_ROLE_ARN=$(aws iam get-role --role-name $NODE_ROLE_NAME --query 'Role.Arn' --output text)
-            
-            echo "Using Node Role ARN: $NODE_ROLE_ARN"
-            echo "Using Subnet IDs: $SUBNET_IDS"
-            
-            # Check for existing node groups
-            NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
-            
-            if [ -z "$NODE_GROUPS" ]; then
-            echo "Creating node group with role $NODE_ROLE_ARN"
+          cd aws_infra
+          
+          # Get cluster info and create node group
+          echo "Getting cluster information..."
+          ROLE_ARN=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.roleArn' --output text)
+          
+          # Get Node IAM Role ARN
+          NODE_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-worker-node-role" --query 'Role.Arn' --output text || echo "")
+          
+          if [ -z "$NODE_ROLE_ARN" ]; then
+            echo "Node role not found. Please ensure the IAM role is created."
+            exit 1
+          fi
+          
+          # Get subnet information
+          SUBNET_IDS=$(aws eks describe-cluster --name $CLUSTER_NAME \
+            --query 'cluster.resourcesVpcConfig.subnetIds[]' \
+            --output text)
+          
+          # Check and create node group if needed
+          echo "Checking EKS node groups..."
+          EXISTING_NODEGROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
+          
+          if [ -z "$EXISTING_NODEGROUPS" ]; then
+            echo "Creating node group..."
             aws eks create-nodegroup \
-                --cluster-name $CLUSTER_NAME \
-                --nodegroup-name managed-ng \
-                --subnets $SUBNET_IDS \
-                --instance-types t3.xlarge \  # Changed to t3.xlarge for higher CPU capacity
-                --node-role $NODE_ROLE_ARN \
-                --scaling-config minSize=1,maxSize=3,desiredSize=2 \
-                --disk-size 20 \
-                --ami-type AL2_x86_64
+              --cluster-name $CLUSTER_NAME \
+              --nodegroup-name default-nodegroup \
+              --node-role $NODE_ROLE_ARN \
+              --subnets $SUBNET_IDS \
+              --instance-types t3.xlarge \
+              --scaling-config minSize=1,maxSize=3,desiredSize=2 \
+              --ami-type AL2_x86_64
             
-            echo "Waiting for node group to become active..."
+            echo "Waiting for node group to be active..."
             aws eks wait nodegroup-active \
-                --cluster-name $CLUSTER_NAME \
-                --nodegroup-name managed-ng
-            fi
-            
-            echo "Waiting for nodes to join cluster..."
-            until kubectl get nodes | grep -q "Ready"; do
-            echo "Waiting for nodes..."
-            sleep 10
-            done
-            
-            echo "Applying deployment..."
-            # Use your existing deployment.yml with envsubst
-            envsubst < k8s/deployment.yml | kubectl apply -f -
-            kubectl apply -f k8s/service.yml
-            kubectl apply -f k8s/ingress.yml
-            
-            echo "Waiting for deployment rollout..."
-            kubectl rollout status deployment/massage-website --timeout=300s
-        
-            echo "Checking pod status..."
-            kubectl get pods -l app=massage-website
-            kubectl describe pods -l app=massage-website
+              --cluster-name $CLUSTER_NAME \
+              --nodegroup-name default-nodegroup
+          fi
+          
+          # Wait for nodes to be ready
+          echo "Waiting for nodes to be ready..."
+          kubectl wait --for=condition=ready nodes --all --timeout=300s
+          
+          # Deploy using existing deployment.yml
+          echo "Deploying application..."
+          echo "Cleaning up old deployment resources..."
+          kubectl delete deployment massage-website --ignore-not-found=true
+          
+          # Use envsubst with your existing deployment.yml
+          echo "Applying manifests..."
+          envsubst < k8s/deployment.yml | kubectl apply -f -
+          kubectl apply -f k8s/service.yml
+          kubectl apply -f k8s/ingress.yml
+          
+          echo "Verifying deployment..."
+          kubectl get deployment massage-website -o yaml | grep -A 8 resources
+          
+          echo "Waiting for deployment rollout..."
+          kubectl rollout status deployment/massage-website --timeout=300s
+          
+          echo "Final status:"
+          kubectl get pods,nodes
