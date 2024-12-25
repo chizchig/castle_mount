@@ -263,18 +263,24 @@ jobs:
         IMAGE_TAG: ${{ github.sha }}
       run: |
         cd aws_infra
-
+    
         # Install eksctl
         echo "Installing eksctl..."
         curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
         sudo mv /tmp/eksctl /usr/local/bin
         eksctl version
-
-        ## Check and create node group if needed
+    
+        # Get VPC and Subnet information
+        echo "Getting VPC and Subnet information..."
+        CLUSTER_NAME=eagle-eks-cluster
+        VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        SUBNET_IDS=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
+        SECURITY_GROUP=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+    
+        # Check and create node group if needed
         echo "Checking EKS node groups..."
-        CLUSTER_NAME=${{ needs.deploy-infrastructure.outputs.cluster_name }}
         NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
-        
+    
         if [ -z "$NODE_GROUPS" ]; then
           echo "No node groups found. Creating default node group..."
           eksctl create nodegroup \
@@ -285,26 +291,29 @@ jobs:
             --nodes 2 \
             --nodes-min 1 \
             --nodes-max 3 \
-            --managed
-
+            --managed \
+            --vpc-id $VPC_ID \
+            --subnets $SUBNET_IDS \
+            --security-groups $SECURITY_GROUP
+    
           echo "Waiting for nodes to be ready..."
           sleep 60
         fi
-
-        # Cleanup old resources
+    
+        # Rest of your existing deployment code...
         echo "Cleaning up old deployment resources..."
         kubectl delete deployment massage-website --ignore-not-found=true
         kubectl get pods -l app=massage-website -o name | xargs -r kubectl delete --force --grace-period=0
         kubectl delete rs -l app=massage-website --ignore-not-found=true
-        
+    
         echo "Applying manifests..."
         envsubst < k8s/deployment.yml | kubectl apply -f -
         kubectl apply -f k8s/service.yml
         kubectl apply -f k8s/ingress.yml
-        
+    
         echo "Checking pod status..."
         kubectl get pods -l app=massage-website
         kubectl describe pods -l app=massage-website
-        
+    
         echo "Waiting for deployment rollout..."
         kubectl rollout status deployment/massage-website --timeout=300s
