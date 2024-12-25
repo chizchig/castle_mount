@@ -264,43 +264,38 @@ jobs:
       run: |
         cd aws_infra
         
-        # Install eksctl
-        echo "Installing eksctl..."
-        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-        sudo mv /tmp/eksctl /usr/local/bin
-        eksctl version
-        
-        # Get VPC and Subnet information
-        echo "Getting VPC and Subnet information..."
+        # Get cluster info
+        echo "Getting cluster information..."
         CLUSTER_NAME=eagle-eks-cluster
+        ROLE_ARN=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.roleArn' --output text)
         
-        # Convert space-separated subnet IDs to comma-separated
+        # Get Node IAM Role ARN
+        NODE_ROLE_ARN=$(aws iam get-role --role-name eagle-eks-cluster-worker-node-role --query 'Role.Arn' --output text)
+        
+        # Get subnet information
         SUBNET_IDS=$(aws eks describe-cluster --name $CLUSTER_NAME \
           --query 'cluster.resourcesVpcConfig.subnetIds[]' \
-          --output text | tr ' ' ',')
+          --output text)
         
-        echo "Using subnets: $SUBNET_IDS"
-        
-        # Check and create node group if needed
+        # Check for existing node groups
         echo "Checking EKS node groups..."
         NODE_GROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
         
         if [ -z "$NODE_GROUPS" ]; then
           echo "No node groups found. Creating default node group..."
-          eksctl create nodegroup \
-            --cluster $CLUSTER_NAME \
-            --region us-east-1 \
-            --name default-nodegroup \
-            --node-type t3.medium \
-            --nodes 2 \
-            --nodes-min 1 \
-            --nodes-max 3 \
-            --managed \
-            --node-private-networking \
-            --subnet-ids="$SUBNET_IDS"
-        
-          echo "Waiting for nodes to be ready..."
-          sleep 60
+          aws eks create-nodegroup \
+            --cluster-name $CLUSTER_NAME \
+            --nodegroup-name default-nodegroup \
+            --scaling-config minSize=1,maxSize=3,desiredSize=2 \
+            --subnets $SUBNET_IDS \
+            --instance-types t3.medium \
+            --node-role $NODE_ROLE_ARN \
+            --ami-type AL2_x86_64
+          
+          echo "Waiting for nodegroup to be active..."
+          aws eks wait nodegroup-active \
+            --cluster-name $CLUSTER_NAME \
+            --nodegroup-name default-nodegroup
         fi
         
         # Rest of deployment remains the same
