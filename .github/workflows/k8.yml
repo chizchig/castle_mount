@@ -61,7 +61,7 @@ jobs:
       run: |
           cd aws_infra
           
-          # Get cluster info and create node group
+          ## Get cluster info and create node group
           echo "Getting cluster information..."
           ROLE_ARN=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.roleArn' --output text)
           
