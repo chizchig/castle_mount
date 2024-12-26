@@ -44,14 +44,20 @@ jobs:
 
     - name: Configure kubectl
       run: |
-        aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region us-east-1
-
+          # Get cluster name from Terraform output
+          CLUSTER_NAME=$(terraform -chdir=./aws_infra output -raw cluster_name)
+          echo "Using cluster name: $CLUSTER_NAME"
+          
+          aws eks update-kubeconfig \
+            --name $CLUSTER_NAME \
+            --region us-east-1
+      
     - name: Deploy to Kubernetes
       env:
-          ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+          ECR_REGISTRY: $(terraform -chdir=./aws_infra output -raw ecr_repository_url)
+          CLUSTER_NAME: $(terraform -chdir=./aws_infra output -raw cluster_name)
           IMAGE_TAG: ${{ github.sha }}
-          CLUSTER_NAME: eagle-eks-cluster
-          REPO_NAME: falcon_ecr
+          REPO_NAME: eagle_ecr
       run: |
           cd aws_infra
           
