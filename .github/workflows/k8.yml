@@ -17,6 +17,11 @@ jobs:
   deploy-to-k8s:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    env:
+      CLUSTER_NAME: ${{ needs.deploy-infrastructure.outputs.cluster_name }}
+      ECR_REGISTRY: ${{ needs.deploy-infrastructure.outputs.ecr_repository_url }}
+      IMAGE_TAG: ${{ github.sha }}
+      REPO_NAME: eagle_ecr
 
     steps:
     - name: Checkout code
@@ -29,21 +34,10 @@ jobs:
         aws-region: us-east-1
         role-session-name: GitHubActions-${{ github.run_id }}
 
-    - name: Get workflow outputs
-      run: |
-        CLUSTER_NAME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}" \
-          | jq -r '.outputs.cluster_name')
-        ECR_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}" \
-          | jq -r '.outputs.ecr_repository_url')
-        echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
-        echo "ECR_REGISTRY=$ECR_URL" >> $GITHUB_ENV
-
     - name: Configure kubectl
       run: |
-        aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region us-east-1
-
+        aws eks update-kubeconfig --name ${{ needs.deploy-infrastructure.outputs.cluster_name }} --region us-east-1
+        
     - name: Deploy to Kubernetes
       env:
         IMAGE_TAG: ${{ github.sha }}
