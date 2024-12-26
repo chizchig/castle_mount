@@ -1,9 +1,9 @@
-# k8.yml
+
 name: Kubernetes Deployment
 
 on:
   workflow_run:
-    workflows: ["Build and Deploy"]  # This refers to the workflow name in main.yml
+    workflows: ["Build and Deploy"]
     types:
       - completed
     branches:
@@ -15,7 +15,6 @@ permissions:
 
 jobs:
   deploy-to-k8s:
-    # Only run if the Build and Deploy workflow succeeded
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
@@ -30,29 +29,19 @@ jobs:
         aws-region: us-east-1
         role-session-name: GitHubActions-${{ github.run_id }}
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_wrapper: false
-
-    - name: Initialize Terraform
-      run: |
-        cd aws_infra
-        terraform init
-
     - name: Get workflow outputs
       run: |
-        cd aws_infra
-        CLUSTER_NAME=$(terraform output -raw cluster_name)
-        ECR_URL=$(terraform output -raw ecr_repository_url)
+        CLUSTER_NAME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}" \
+          | jq -r '.outputs.cluster_name')
+        ECR_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}" \
+          | jq -r '.outputs.ecr_repository_url')
         echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
         echo "ECR_REGISTRY=$ECR_URL" >> $GITHUB_ENV
-        echo "Using cluster: $CLUSTER_NAME"
-        echo "Using ECR: $ECR_URL"
 
     - name: Configure kubectl
       run: |
-        cd aws_infra
         aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region us-east-1
 
     - name: Deploy to Kubernetes
