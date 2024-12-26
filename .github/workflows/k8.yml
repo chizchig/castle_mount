@@ -30,95 +30,94 @@ jobs:
         aws-region: us-east-1
         role-session-name: GitHubActions-${{ github.run_id }}
 
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false
+
+    - name: Initialize Terraform
+      run: |
+        cd aws_infra
+        terraform init
+
     - name: Get workflow outputs
       run: |
-        # Get the outputs from the previous workflow
-        CLUSTER_NAME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}" \
-          | jq -r '.outputs.cluster_name')
-        ECR_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}" \
-          | jq -r '.outputs.ecr_repository_url')
+        cd aws_infra
+        CLUSTER_NAME=$(terraform output -raw cluster_name)
+        ECR_URL=$(terraform output -raw ecr_repository_url)
         echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
         echo "ECR_REGISTRY=$ECR_URL" >> $GITHUB_ENV
+        echo "Using cluster: $CLUSTER_NAME"
+        echo "Using ECR: $ECR_URL"
 
     - name: Configure kubectl
       run: |
-          # Get cluster name from Terraform output
-          CLUSTER_NAME=$(terraform -chdir=./aws_infra output -raw cluster_name)
-          echo "Using cluster name: $CLUSTER_NAME"
-          
-          aws eks update-kubeconfig \
-            --name $CLUSTER_NAME \
-            --region us-east-1
-      
+        cd aws_infra
+        aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region us-east-1
+
     - name: Deploy to Kubernetes
       env:
-          ECR_REGISTRY: $(terraform -chdir=./aws_infra output -raw ecr_repository_url)
-          CLUSTER_NAME: $(terraform -chdir=./aws_infra output -raw cluster_name)
-          IMAGE_TAG: ${{ github.sha }}
-          REPO_NAME: eagle_ecr
+        IMAGE_TAG: ${{ github.sha }}
+        REPO_NAME: eagle_ecr
       run: |
-          cd aws_infra
+        cd aws_infra
+        
+        # Get cluster info and create node group
+        echo "Getting cluster information..."
+        ROLE_ARN=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.roleArn' --output text)
+        
+        # Get Node IAM Role ARN
+        NODE_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-worker-node-role" --query 'Role.Arn' --output text || echo "")
+        
+        if [ -z "$NODE_ROLE_ARN" ]; then
+          echo "Node role not found. Please ensure the IAM role is created."
+          exit 1
+        fi
+        
+        # Get subnet information
+        SUBNET_IDS=$(aws eks describe-cluster --name $CLUSTER_NAME \
+          --query 'cluster.resourcesVpcConfig.subnetIds[]' \
+          --output text)
+        
+        # Check and create node group if needed
+        echo "Checking EKS node groups..."
+        EXISTING_NODEGROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
+        
+        if [ -z "$EXISTING_NODEGROUPS" ]; then
+          echo "Creating node group..."
+          aws eks create-nodegroup \
+            --cluster-name $CLUSTER_NAME \
+            --nodegroup-name default-nodegroup \
+            --node-role $NODE_ROLE_ARN \
+            --subnets $SUBNET_IDS \
+            --instance-types t3.xlarge \
+            --scaling-config minSize=1,maxSize=3,desiredSize=2 \
+            --ami-type AL2_x86_64
           
-          ## Get cluster info and create node group
-          echo "Getting cluster information..."
-          ROLE_ARN=$(aws eks describe-cluster --name $CLUSTER_NAME --query 'cluster.roleArn' --output text)
-          
-          # Get Node IAM Role ARN
-          NODE_ROLE_ARN=$(aws iam get-role --role-name "${CLUSTER_NAME}-worker-node-role" --query 'Role.Arn' --output text || echo "")
-          
-          if [ -z "$NODE_ROLE_ARN" ]; then
-            echo "Node role not found. Please ensure the IAM role is created."
-            exit 1
-          fi
-          
-          # Get subnet information
-          SUBNET_IDS=$(aws eks describe-cluster --name $CLUSTER_NAME \
-            --query 'cluster.resourcesVpcConfig.subnetIds[]' \
-            --output text)
-          
-          # Check and create node group if needed
-          echo "Checking EKS node groups..."
-          EXISTING_NODEGROUPS=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query 'nodegroups[*]' --output text || echo "")
-          
-          if [ -z "$EXISTING_NODEGROUPS" ]; then
-            echo "Creating node group..."
-            aws eks create-nodegroup \
-              --cluster-name $CLUSTER_NAME \
-              --nodegroup-name default-nodegroup \
-              --node-role $NODE_ROLE_ARN \
-              --subnets $SUBNET_IDS \
-              --instance-types t3.xlarge \
-              --scaling-config minSize=1,maxSize=3,desiredSize=2 \
-              --ami-type AL2_x86_64
-            
-            echo "Waiting for node group to be active..."
-            aws eks wait nodegroup-active \
-              --cluster-name $CLUSTER_NAME \
-              --nodegroup-name default-nodegroup
-          fi
-          
-          # Wait for nodes to be ready
-          echo "Waiting for nodes to be ready..."
-          kubectl wait --for=condition=ready nodes --all --timeout=300s
-          
-          # Deploy using existing deployment.yml
-          echo "Deploying application..."
-          echo "Cleaning up old deployment resources..."
-          kubectl delete deployment massage-website --ignore-not-found=true
-          
-          # Use envsubst with your existing deployment.yml
-          echo "Applying manifests..."
-          envsubst < k8s/deployment.yml | kubectl apply -f -
-          kubectl apply -f k8s/service.yml
-          kubectl apply -f k8s/ingress.yml
-          
-          echo "Verifying deployment..."
-          kubectl get deployment massage-website -o yaml | grep -A 8 resources
-          
-          echo "Waiting for deployment rollout..."
-          kubectl rollout status deployment/massage-website --timeout=300s
-          
-          echo "Final status:"
-          kubectl get pods,nodes
+          echo "Waiting for node group to be active..."
+          aws eks wait nodegroup-active \
+            --cluster-name $CLUSTER_NAME \
+            --nodegroup-name default-nodegroup
+        fi
+        
+        # Wait for nodes to be ready
+        echo "Waiting for nodes to be ready..."
+        kubectl wait --for=condition=ready nodes --all --timeout=300s
+        
+        echo "Deploying application..."
+        echo "Cleaning up old deployment resources..."
+        kubectl delete deployment massage-website --ignore-not-found=true
+        
+        echo "Applying manifests..."
+        envsubst < k8s/deployment.yml | kubectl apply -f -
+        kubectl apply -f k8s/service.yml
+        kubectl apply -f k8s/ingress.yml
+        
+        echo "Verifying deployment..."
+        kubectl get deployment massage-website -o yaml | grep -A 8 resources
+        
+        echo "Waiting for deployment rollout..."
+        kubectl rollout status deployment/massage-website --timeout=300s
+        
+        echo "Final status:"
+        kubectl get pods,nodes
