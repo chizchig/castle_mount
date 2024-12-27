@@ -13,14 +13,20 @@ variable "public_subnets" {
   description = "List of public subnet IDs"
 }
 
+# modules/eks/variables.tf
 variable "node_groups" {
-  description = "Map of node groups with instance types, sizes, and scaling configurations."
   type = map(object({
-    instance_type    = string
-    desired_capacity = number
-    min_size         = number
-    max_size         = number
+    desired_size = number
+    max_size     = number
+    min_size     = number
   }))
+  default = {
+    main = {
+      desired_size = 2
+      max_size     = 3
+      min_size     = 1
+    }
+  }
 }
 
 # variable "roles" {
