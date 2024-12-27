@@ -130,10 +130,17 @@ resource "null_resource" "k8s_deploy" {
 
   provisioner "local-exec" {
   command = <<EOT
-    aws eks update-kubeconfig --name eagle-eks-cluster --region us-east-1 &&
-    kubectl apply -f ./k8s/deployment.yml &&
-    kubectl apply -f ./k8s/service.yml &&
-    kubectl apply -f ./k8s/ingress.yml
+      aws eks update-kubeconfig --name ${module.eks.cluster_name} --region us-east-1 &&
+      kubectl get nodes &&
+      echo "Applying deployment..." &&
+      envsubst < k8s/deployment.yml | kubectl apply -f - &&
+      echo "Checking pods..." &&
+      kubectl get pods -l app=massage-website &&
+      echo "Checking pod logs..." &&
+      kubectl logs -l app=massage-website --tail=50 &&
+      kubectl apply -f k8s/service.yml &&
+      kubectl apply -f k8s/ingress.yml &&
+      kubectl rollout status deployment/massage-website --timeout=300s
   EOT
  }
 
