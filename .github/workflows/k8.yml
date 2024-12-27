@@ -38,15 +38,28 @@ jobs:
         cd aws_infra
         terraform init
         
-        # Get outputs directly from Terraform
-        CLUSTER_NAME=$(terraform output -raw cluster_name)
-        ECR_URL=$(terraform output -raw ecr_repository_url)
+        terraform refresh
         
-        echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
-        echo "ECR_REGISTRY=$ECR_URL" >> $GITHUB_ENV
+        # Get outputs with error handling
+        if ! CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null); then
+          echo "Error: cluster_name output not found in Terraform state"
+          echo "Please ensure your Terraform configuration has the required outputs defined:"
+          echo "- cluster_name"
+          echo "- ecr_repository_url"
+          exit 1
+        fi
         
-        echo "Using cluster: $CLUSTER_NAME"
-        echo "Using ECR: $ECR_URL"
+        if ! ECR_URL=$(terraform output -raw ecr_repository_url 2>/dev/null); then
+          echo "Error: ecr_repository_url output not found in Terraform state"
+          exit 1
+        fi
+        
+        # Set environment variables if we got valid outputs
+        echo "CLUSTER_NAME=${CLUSTER_NAME}" >> $GITHUB_ENV
+        echo "ECR_REGISTRY=${ECR_URL}" >> $GITHUB_ENV
+        
+        echo "Using cluster: ${CLUSTER_NAME}"
+        echo "Using ECR: ${ECR_URL}"
 
     - name: Configure kubectl
       run: |
