@@ -26,23 +26,17 @@ module "eks" {
 
   cluster_name    = var.cluster_name
   cluster_version = var.cluster_version
-
-  # VPC Configuration
-  # vpc_id          = module.vpc.vpc_id
   public_subnets  = module.vpc.public_subnets
-  # private_subnets = module.vpc.private_subnets
-
-  # Node groups configuration
-  node_groups     = var.node_groups
-
-  # IAM roles configuration
-  roles           = var.roles
-
-  # Tags
-  # tags = {
-  #   Environment = var.environment
-  #   Project     = var.project_name
-  # }
+  
+  node_groups     = {
+    main = {
+      desired_size = 2
+      max_size     = 3
+      min_size     = 1
+    }
+  }
+  
+  roles = var.roles
 }
 
 module "security_group" {

@@ -15,6 +15,8 @@ spec:
       labels:
         app: massage-website
     spec:
+      nodeSelector:
+        kubernetes.io/os: linux
       containers:
         - name: massage-website
           image: "${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}" # Placeholder for dynamic substitution
