@@ -28,30 +28,33 @@ jobs:
         aws-region: us-east-1
         role-session-name: GitHubActions-${{ github.run_id }}
 
-    - name: Download workflow artifact
-      id: download-artifact
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false
+  
+    - name: Initialize Terraform and get outputs
       run: |
-        echo "Getting workflow outputs..."
-        WORKFLOW_OUTPUT=$(gh api \
-          /repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/jobs \
-          --jq '.jobs[0].outputs')
+        cd aws_infra
+        terraform init
         
-        CLUSTER_NAME=$(echo "$WORKFLOW_OUTPUT" | jq -r '.cluster_name')
-        ECR_URL=$(echo "$WORKFLOW_OUTPUT" | jq -r '.ecr_url')
+        # Get outputs directly from Terraform
+        CLUSTER_NAME=$(terraform output -raw cluster_name)
+        ECR_URL=$(terraform output -raw ecr_repository_url)
         
-        if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "null" ]; then
-          echo "Error: Could not get cluster name"
-          exit 1
-        fi
+        echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+        echo "ECR_REGISTRY=$ECR_URL" >> $GITHUB_ENV
         
-        echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_ENV
-        echo "ecr_registry=$ECR_URL" >> $GITHUB_ENV
+        echo "Using cluster: $CLUSTER_NAME"
+        echo "Using ECR: $ECR_URL"
 
     - name: Configure kubectl
       run: |
-        aws eks update-kubeconfig --name ${CLUSTER_NAME} --region us-east-1
+       if [ -z "${{ env.CLUSTER_NAME }}" ]; then
+        echo "Error: CLUSTER_NAME is not set"
+        exit 1
+       fi
+       aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region us-east-1
 
     - name: Deploy to Kubernetes
       env:
