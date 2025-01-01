@@ -123,21 +123,23 @@ resource "null_resource" "k8s_deploy" {
   depends_on = [module.eks]
 
   provisioner "local-exec" {
-  command = <<EOT
+    command = <<-EOT
       aws eks update-kubeconfig --name ${module.eks.cluster_name} --region us-east-1 &&
+      echo "Using ECR Registry: $ECR_REGISTRY" &&
+      echo "Using Image Tag: $IMAGE_TAG" &&
       kubectl get nodes &&
       echo "Applying deployment..." &&
-      envsubst < k8s/deployment.yml | kubectl apply -f - &&
+      envsubst < k8s/deployment.yml | tee /tmp/deployment.yml &&
+      kubectl apply -f /tmp/deployment.yml &&
       echo "Checking pods..." &&
-      kubectl get pods -l app=massage-website &&
-      echo "Checking pod logs..." &&
-      kubectl logs -l app=massage-website --tail=50 &&
+      kubectl get pods -l app=massage-website -o wide &&
+      echo "Describing pod..." &&
+      kubectl describe pod -l app=massage-website &&
       kubectl apply -f k8s/service.yml &&
       kubectl apply -f k8s/ingress.yml &&
       kubectl rollout status deployment/massage-website --timeout=300s
-  EOT
- }
-
+    EOT
+  }
 }
 
 # resource "helm_release" "aws_load_balancer_controller" {
