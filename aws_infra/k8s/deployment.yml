@@ -2,11 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: massage-website
-  labels:
-    app: massage-website
 spec:
   replicas: 1
-  progressDeadlineSeconds: 300
   selector:
     matchLabels:
       app: massage-website
@@ -15,33 +12,31 @@ spec:
       labels:
         app: massage-website
     spec:
-      nodeSelector:
-        kubernetes.io/os: linux
       containers:
-        - name: massage-website
-          image: ${ECR_REGISTRY}:${IMAGE_TAG} # Placeholder for dynamic substitution
-          imagePullPolicy: Always
-          ports:
-            - containerPort: 80
-          env:
-            - name: AWS_REGION
-              value: "us-east-1"
-          resources:
-            requests:
-              memory: "64Mi"
-              cpu: "50m"
-            limits:
-              memory: "128Mi"
-              cpu: "100m"
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 80
-            initialDelaySeconds: 10
-            periodSeconds: 5
-          readinessProbe:
-            httpGet:
-              path: /ready
-              port: 80
-            initialDelaySeconds: 10
-            periodSeconds: 5
+      - name: massage-website
+        image: ${ECR_REGISTRY}:${IMAGE_TAG}
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        env:
+        - name: AWS_REGION
+          value: "us-east-1"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
