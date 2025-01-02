@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: massage-website
-        image: ${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}
+        image: ${ECR_REGISTRY}${IMAGE_TAG}  # Removed extra colon
         imagePullPolicy: Always
         ports:
         - containerPort: 80

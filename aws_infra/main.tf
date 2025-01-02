@@ -134,14 +134,14 @@ resource "null_resource" "k8s_deploy" {
       echo "Using Image Tag: $IMAGE_TAG" &&
       kubectl get nodes &&
       echo "Applying deployment..." &&
-      cat k8s/deployment.yml | envsubst | kubectl apply -f - &&
+      cat k8s/deployment.yml | envsubst | tee /tmp/deployment.yml &&
+      kubectl apply -f /tmp/deployment.yml &&
       echo "Checking pods..." &&
       kubectl get pods -l app=massage-website -o wide &&
-      echo "Describing pod..." &&
-      kubectl describe pod -l app=massage-website &&
+      echo "Waiting for rollout..." &&
+      kubectl rollout status deployment/massage-website --timeout=600s &&
       kubectl apply -f k8s/service.yml &&
-      kubectl apply -f k8s/ingress.yml &&
-      kubectl rollout status deployment/massage-website --timeout=300s
+      kubectl apply -f k8s/ingress.yml
     EOT
   }
 }
