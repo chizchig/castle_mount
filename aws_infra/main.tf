@@ -123,14 +123,18 @@ resource "null_resource" "k8s_deploy" {
   depends_on = [module.eks]
 
   provisioner "local-exec" {
+    environment = {
+      ECR_REGISTRY = module.eks.ecr_repository_url
+      IMAGE_TAG    = "latest"
+    }
+
     command = <<-EOT
       aws eks update-kubeconfig --name ${module.eks.cluster_name} --region us-east-1 &&
       echo "Using ECR Registry: $ECR_REGISTRY" &&
       echo "Using Image Tag: $IMAGE_TAG" &&
       kubectl get nodes &&
       echo "Applying deployment..." &&
-      envsubst < k8s/deployment.yml | tee /tmp/deployment.yml &&
-      kubectl apply -f /tmp/deployment.yml &&
+      cat k8s/deployment.yml | envsubst | kubectl apply -f - &&
       echo "Checking pods..." &&
       kubectl get pods -l app=massage-website -o wide &&
       echo "Describing pod..." &&
@@ -141,25 +145,3 @@ resource "null_resource" "k8s_deploy" {
     EOT
   }
 }
-
-# resource "helm_release" "aws_load_balancer_controller" {
-#   name       = "aws-load-balancer-controller"
-#   repository = "https://aws.github.io/eks-charts"
-#   chart      = "aws-load-balancer-controller"
-#   namespace  = "kube-system"
-
-#   set {
-#     name  = "clusterName"
-#     value = var.cluster_name
-#   }
-
-#   set {
-#     name  = "serviceAccount.create"
-#     value = "true"
-#   }
-
-#   # set {
-#   #   name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-#   #   value = aws_iam_role.lb_controller.arn
-#   # }
-# }
