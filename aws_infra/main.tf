@@ -124,7 +124,7 @@ resource "null_resource" "k8s_deploy" {
 
   provisioner "local-exec" {
     environment = {
-      ECR_REGISTRY = module.eks.ecr_repository_url
+      ECR_REGISTRY = aws_ecr_repository.cloud_index.repository_url
       IMAGE_TAG    = "latest"
     }
 
